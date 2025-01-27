@@ -1,6 +1,6 @@
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Contributors](https://img.shields.io/github/contributors/pygmalionrecords/confluence-local-sync.svg)
+![Contributors](https://img.shields.io/github/contributors/Pygmalion-Records/confluence-local-sync.svg)
 
 # Confluence Content Sync Tool
 
