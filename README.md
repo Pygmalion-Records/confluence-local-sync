@@ -2,6 +2,8 @@
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Contributors](https://img.shields.io/github/contributors/Pygmalion-Records/confluence-local-sync.svg)
 
+[![Codecov](https://codecov.io/gh/Pygmalion-Records/confluence-local-sync/branch/main/graph/badge.svg)](https://codecov.io/gh/Pygmalion-Records/confluence-local-sync)
+
 # Confluence Content Sync Tool
 
 A high-performance Python tool for bidirectional content synchronization between local filesystem and Confluence. Built with a performance-first architecture, focusing on reliability, thread safety, and efficient resource management.

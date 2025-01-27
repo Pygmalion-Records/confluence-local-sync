@@ -32,3 +32,8 @@ build/
 # Miscellaneous
 .cache/
 *.swp
+
+source/
+content/
+cache/
+attachments/
