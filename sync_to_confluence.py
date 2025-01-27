@@ -36,11 +36,8 @@ from watchdog.events import FileSystemEventHandler
 from datetime import timedelta
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 class ConfluenceAPIError(Exception):
     """Custom exception for Confluence API errors"""
@@ -105,57 +102,49 @@ class ConfluenceAPI:
         return session
 
     def get_space_content(self) -> Dict:
-        """
-        Retrieve all content from the Confluence space.
-        
-        Returns:
-            Dict: JSON response containing space content
-            
-        Raises:
-            ConfluenceAPIError: If the API request fails
-        """
-        url = f"{self.base_url}/wiki/api/v{self.api_version}/pages"
-        params = {
-            'spaceId': self.space_key,
-            'status': 'current',
-            'limit': 100,
-            'sort': 'created-date'
-        }
+        """Get all content from the space"""
+        print("DEBUG: Starting get_space_content")  # Temporary print
         
         try:
-            logger.info(f"Requesting space content from: {url}")
-            logger.debug(f"Request params: {params}")
+            # First get the space ID from the key
+            url = f"{self.base_url}/wiki/api/v{self.api_version}/spaces"
+            params = {'keys': self.space_key}
             
-            response = self.session.get(url, params=params, timeout=(5, 30))
-            logger.info(f"Response status: {response.status_code}")
-            
-            if response.status_code == 404:
-                raise ConfluenceAPIError(
-                    f"Space '{self.space_key}' not found",
-                    status_code=404
-                )
-            
+            print(f"DEBUG: Getting space ID for key {self.space_key}")  # Temporary print
+            response = self.session.get(url, params=params)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
             
-        except requests.exceptions.Timeout:
-            raise ConfluenceAPIError("Request timed out")
-        except requests.exceptions.RequestException as e:
-            raise ConfluenceAPIError(
-                f"API request failed: {str(e)}",
-                status_code=getattr(e.response, 'status_code', None),
-                response=getattr(e.response, 'text', None)
-            )
-
-    def get_page_by_id(self, page_id: str) -> Dict:
-        """Get a specific page by its ID with proper error handling"""
-        url = f"{self.base_url}/wiki/api/v{self.api_version}/pages/{page_id}"
-        try:
-            response = self.session.get(url, timeout=(5, 30))
+            results = data.get('results', [])
+            if not results:
+                raise ConfluenceAPIError(f"Space {self.space_key} not found")
+            
+            space_id = results[0].get('id')
+            print(f"DEBUG: Found space ID: {space_id}")  # Temporary print
+            
+            # Now get the pages using the space ID
+            url = f"{self.base_url}/wiki/api/v{self.api_version}/pages"
+            params = {
+                'space-id': space_id,
+                'status': 'current',
+                'limit': 100,
+                'sort': 'created-date',
+                'body-format': 'storage',
+                'expand': 'body.storage,space'
+            }
+            
+            print(f"DEBUG: Getting pages with params: {params}")  # Temporary print
+            response = self.session.get(url, params=params)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            
+            print(f"DEBUG: Got {len(data.get('results', []))} pages")  # Temporary print
+            
+            return data
+            
         except requests.exceptions.RequestException as e:
-            raise ConfluenceAPIError(f"Failed to get page {page_id}: {str(e)}")
+            print(f"DEBUG: API request failed: {str(e)}")  # Temporary print
+            raise ConfluenceAPIError(f"Failed to get space content: {str(e)}")
 
     def get_space_id(self) -> str:
         """
@@ -163,46 +152,92 @@ class ConfluenceAPI:
         
         Returns:
             str: The space ID
-            
+        
         Raises:
             ConfluenceAPIError: If the space cannot be found
         """
-        url = f"{self.base_url}/wiki/api/v{self.api_version}/spaces"
-        params = {
-            'keys': self.space_key,
-            'status': 'current'
-        }
-        
+        spaces_url = f"{self.base_url}/wiki/api/v{self.api_version}/spaces"
         try:
-            logger.debug(f"Getting space ID for key: {self.space_key}")
-            response = self.session.get(url, params=params, timeout=(5, 30))
-            response.raise_for_status()
+            spaces_response = self.session.get(spaces_url, timeout=(5, 30))
+            spaces_response.raise_for_status()
+            spaces_data = spaces_response.json()
             
-            spaces = response.json().get('results', [])
-            if not spaces:
-                raise ConfluenceAPIError(f"Space with key '{self.space_key}' not found")
+            # Find our space
+            space = next(
+                (s for s in spaces_data.get('results', []) 
+                 if s.get('key') == self.space_key),
+                None
+            )
+            
+            if not space:
+                raise ConfluenceAPIError(
+                    f"Space '{self.space_key}' not found",
+                    status_code=404
+                )
                 
-            return spaces[0]['id']
+            space_id = space.get('id')
+            if not space_id:
+                raise ConfluenceAPIError(
+                    f"Could not get ID for space '{self.space_key}'",
+                    status_code=404
+                )
+                
+            return space_id
             
         except requests.exceptions.RequestException as e:
-            raise ConfluenceAPIError(f"Failed to get space ID: {str(e)}")
+            raise ConfluenceAPIError(
+                f"Failed to get space ID: {str(e)}",
+                status_code=getattr(e.response, 'status_code', None),
+                response=getattr(e.response, 'text', None)
+            )
+
+    def get_page_by_id(self, page_id: str) -> Dict:
+        """Get a page by its ID"""
+        print(f"DEBUG: Getting page by ID: {page_id}")  # Debug print
+        
+        url = f"{self.base_url}/wiki/api/v{self.api_version}/pages/{page_id}"
+        params = {
+            'body-format': 'storage',
+            'expand': 'body.storage,space,version'  # Add body.storage to expansion
+        }
+        
+        print(f"DEBUG: Request URL: {url}")  # Debug print
+        print(f"DEBUG: Request params: {params}")  # Debug print
+        
+        try:
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            print(f"DEBUG: Response data keys: {list(data.keys())}")  # Debug print
+            if 'body' in data:
+                print(f"DEBUG: Body keys: {list(data['body'].keys())}")  # Debug print
+                if 'storage' in data['body']:
+                    print(f"DEBUG: Storage value length: {len(data['body']['storage'].get('value', ''))}")  # Debug print
+            
+            return data
+            
+        except requests.exceptions.RequestException as e:
+            print(f"DEBUG: API request failed: {str(e)}")  # Debug print
+            raise ConfluenceAPIError(f"Failed to get page {page_id}: {str(e)}")
 
     def update_page(self, page_id: str, content: Dict) -> Dict:
         """
-        Update an existing page with proper error handling and version conflict resolution
-        
+        Update an existing page with proper error handling, version conflict resolution,
+        and ADF format support
+
         Args:
             page_id: The ID of the page to update
-            content: The page content and metadata
-            
+            content: The page content and metadata in ADF format
+
         Returns:
             Dict: The updated page data
-            
+
         Raises:
             ConfluenceAPIError: If the update fails
         """
         url = f"{self.base_url}/wiki/api/v{self.api_version}/pages/{page_id}"
-        
+
         # Get current page to get the version number
         try:
             current_page = self.get_page_by_id(page_id)
@@ -211,16 +246,12 @@ class ConfluenceAPI:
         except ConfluenceAPIError as e:
             logger.error(f"Failed to get current page version: {e.message}")
             raise
-        
-        # Ensure we're using the correct space ID
-        space_id = self.get_space_id()
-        
-        # Format the request body according to Confluence API v2 specs
+
+        # The content is already in ADF format, just need to structure it correctly
         update_data = {
             "id": page_id,
             "status": "current",
             "title": content.get('title', ''),
-            "spaceId": space_id,
             "body": {
                 "representation": "storage",
                 "value": content.get('body', {}).get('storage', {}).get('value', '')
@@ -230,71 +261,65 @@ class ConfluenceAPI:
                 "message": f"Updated via sync tool at {datetime.now().isoformat()}"
             }
         }
-        
-        max_retries = 3
-        retry_count = 0
-        
-        while retry_count < max_retries:
-            try:
-                logger.debug(f"Updating page {page_id} (version {current_version + 1})")
-                logger.debug(f"Update data: {json.dumps(update_data)}")
-                
-                response = self.session.put(url, json=update_data, timeout=(5, 30))
-                response.raise_for_status()
-                
-                logger.info(f"Successfully updated page {page_id} to version {current_version + 1}")
-                return response.json()
-                
-            except requests.exceptions.RequestException as e:
-                error_status = getattr(e.response, 'status_code', None)
-                error_text = getattr(e.response, 'text', '')
-                
-                # Log detailed error information
-                logger.error(f"Error updating page {page_id} (status: {error_status})")
-                logger.error(f"Error response: {error_text}")
-                
+
+        # Handle space moves in two steps:
+        # 1. First convert to draft if needed
+        # 2. Then move to new space
+        current_space_id = current_page.get('spaceId')
+        new_space_id = self.get_space_id()
+        is_space_move = current_space_id != new_space_id
+
+        if is_space_move:
+            # Step 1: Convert to draft if not already
+            if current_page.get('status') != 'draft':
+                draft_data = update_data.copy()
+                draft_data['status'] = 'draft'
+                draft_data['version']['number'] = 1
+
                 try:
-                    error_json = e.response.json() if e.response else {}
-                    logger.error(f"Detailed error: {json.dumps(error_json, indent=2)}")
-                except:
-                    error_json = {}
-                
-                # Handle version conflict (409) or bad request (400)
-                if error_status in (409, 400):
-                    if retry_count < max_retries - 1:
-                        retry_count += 1
-                        logger.warning(f"Version conflict detected, retrying ({retry_count}/{max_retries})")
-                        
-                        # Re-fetch current version
-                        try:
-                            current_page = self.get_page_by_id(page_id)
-                            current_version = current_page.get('version', {}).get('number', 1)
-                            update_data['version']['number'] = current_version + 1
-                            
-                            logger.info(f"Retrieved new version {current_version}, retrying update")
-                            continue
-                            
-                        except ConfluenceAPIError as fetch_error:
-                            logger.error(f"Failed to get updated version: {fetch_error.message}")
-                            raise
-                
-                # Construct detailed error message
-                error_msg = f"Failed to update page {page_id}"
-                if error_status:
-                    error_msg += f" (HTTP {error_status})"
-                
-                if 'message' in error_json:
-                    error_msg += f": {error_json['message']}"
-                elif error_text:
-                    error_msg += f": {error_text}"
-                else:
-                    error_msg += f": {str(e)}"
-                
-                raise ConfluenceAPIError(
-                    error_msg,
-                    status_code=error_status,
-                    response=error_text
-                )
+                    logger.info(f"Converting page {page_id} to draft status")
+                    response = self.session.put(url, json=draft_data, timeout=(5, 30))
+                    response.raise_for_status()
+
+                    # Wait and verify the page is actually in draft status
+                    max_draft_checks = 3
+                    draft_check_count = 0
+                    while draft_check_count < max_draft_checks:
+                        time.sleep(1)  # Wait a second before checking
+                        current_page = self.get_page_by_id(page_id)
+                        if current_page.get('status') == 'draft':
+                            logger.info(f"Successfully converted page {page_id} to draft")
+                            break
+                        draft_check_count += 1
+                        if draft_check_count == max_draft_checks:
+                            raise ConfluenceAPIError(
+                                f"Failed to convert page {page_id} to draft status after {max_draft_checks} attempts",
+                                status_code=400
+                            )
+                except requests.exceptions.RequestException as e:
+                    raise ConfluenceAPIError(f"Failed to convert page {page_id} to draft", e)
+
+            # Step 2: Move to new space
+            update_data['spaceId'] = new_space_id
+
+        try:
+            response = self.session.put(url, json=update_data, timeout=(5, 30))
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            if isinstance(e, requests.exceptions.HTTPError):
+                try:
+                    error_data = e.response.json()
+                    error_message = error_data.get('errors', [{}])[0].get('title', str(e))
+                    logger.error(f"Error updating page {page_id} (status: {e.response.status_code})")
+                    logger.error(f"Error response: {json.dumps(error_data)}")
+                    raise ConfluenceAPIError(
+                        f"Failed to update page {page_id} (HTTP {e.response.status_code}): {json.dumps(error_data)}",
+                        status_code=e.response.status_code
+                    )
+                except (json.JSONDecodeError, KeyError, AttributeError):
+                    pass
+            raise ConfluenceAPIError(f"Failed to update page {page_id}", e)
 
     def create_page(self, content: Dict) -> Dict:
         """
@@ -559,7 +584,7 @@ class ConfluenceAPI:
                     
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
-                    
+                        
         # If we get here, all attempts failed
         error_msg = f"Failed to download attachment {attachment.get('title', 'Unknown')} after trying multiple URLs"
         if last_error and hasattr(last_error, 'response') and last_error.response is not None:
@@ -723,6 +748,88 @@ class ConfluenceAPI:
         except (json.JSONDecodeError, OSError) as e:
             logger.error(f"Failed to clear failed attachment: {str(e)}")
 
+    def _clean_adf_content(self, content: Dict) -> Dict:
+        """
+        Clean and normalize ADF content from various possible formats
+        """
+        if not content:
+            return {}
+
+        # Handle nested value structure
+        if isinstance(content.get('value'), dict):
+            value = content['value']
+            if value.get('representation') == 'atlas_doc_format':
+                return {'value': value.get('value', {})}
+            return {'value': value}
+
+        # Handle JSON string value
+        if isinstance(content.get('value'), str):
+            try:
+                return {'value': json.loads(content['value'])}
+            except json.JSONDecodeError:
+                return {}
+
+        return content
+
+    def get_page_body(self, page_id: str) -> Dict:
+        """
+        Get the body content of a page in storage format
+        
+        Args:
+            page_id: ID of the page to get body content for
+        
+        Returns:
+            Dict: Body content in storage format with representation and value fields
+        
+        Raises:
+            ConfluenceAPIError: If the API request fails or page is not in the correct space
+        """
+        print(f"DEBUG: Getting body for page {page_id}")  # Temporary print for debugging
+        
+        url = f"{self.base_url}/wiki/api/v{self.api_version}/pages/{page_id}"
+        params = {
+            'body-format': 'storage',
+            'expand': 'body.storage,space'  # Add space to expansion
+        }
+        
+        print(f"DEBUG: Request URL: {url}")  # Temporary print for debugging
+        print(f"DEBUG: Request params: {params}")  # Temporary print for debugging
+        
+        try:
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            print(f"DEBUG: Response status: {response.status_code}")  # Temporary print
+            print(f"DEBUG: Response data keys: {list(data.keys())}")  # Temporary print
+            
+            # Verify page is in the correct space
+            space = data.get('space', {})
+            if space.get('key') != self.space_key:
+                raise ConfluenceAPIError(f"Page {page_id} is not in space {self.space_key}")
+            
+            # Extract and return the body content
+            body = data.get('body', {})
+            print(f"DEBUG: Body keys: {list(body.keys())}")  # Temporary print
+            
+            storage = body.get('storage', {})
+            print(f"DEBUG: Storage keys: {list(storage.keys())}")  # Temporary print
+            
+            value = storage.get('value', '')
+            print(f"DEBUG: Body content length: {len(value)}")  # Temporary print
+            
+            if not value:
+                print(f"DEBUG: No body content found for page {page_id}")  # Temporary print
+            
+            return {
+                'representation': 'storage',
+                'value': value
+            }
+            
+        except requests.exceptions.RequestException as e:
+            print(f"DEBUG: API request failed: {str(e)}")  # Temporary print
+            raise ConfluenceAPIError(f"Failed to get page body: {str(e)}")
+
 class LocalContentManager:
     def __init__(self):
         self.content_dir = Path(os.getenv('LOCAL_CONTENT_DIR', './content'))
@@ -787,38 +894,57 @@ class LocalContentManager:
         return content
 
     def save_content(self, page_id: str, content: Dict):
-        """
-        Save content locally using a human-readable filename
+        """Save content to local file"""
+        logger.debug(f"Saving content for page {page_id}")  
+        logger.debug(f"Content keys: {list(content.keys())}")  
         
-        Args:
-            page_id: The Confluence page ID
-            content: The page content and metadata
-        """
-        # Generate filename from title or use existing mapping
-        title = content.get('title', '')
-        if not title:
-            filename = page_id
+        # Ensure content directory exists
+        os.makedirs(self.content_dir, exist_ok=True)
+        
+        # Get the title for the filename
+        title = content.get('title', 'untitled').lower().replace(' ', '_')
+        filename = f"{title}.json"
+        filepath = os.path.join(self.content_dir, filename)
+        
+        logger.debug(f"Saving to file: {filepath}")  
+        
+        # Extract body content
+        body = content.get('body', {})
+        if isinstance(body, dict) and 'storage' in body:
+            body_content = {
+                'representation': 'storage',
+                'value': body['storage'].get('value', '')
+            }
         else:
-            filename = self._sanitize_filename(title)
-            
-            # Handle filename collisions
-            base_filename = filename
-            counter = 1
-            while any(f != page_id and v == filename for f, v in self.id_to_filename.items()):
-                filename = f"{base_filename}-{counter}"
-                counter += 1
+            body_content = {}
+            logger.debug(f"No storage content found in body: {body}")  
         
-        # Update the ID mapping
-        self.id_to_filename[page_id] = filename
-        self._save_id_mapping()
+        # Prepare content for saving
+        save_content = {
+            'id': content.get('id'),
+            'title': content.get('title'),
+            'type': content.get('type'),
+            'status': content.get('status'),
+            'body': body_content,
+            'version': content.get('version'),
+            'createdAt': content.get('createdAt'),
+            'authorId': content.get('authorId'),
+            'lastOwnerId': content.get('lastOwnerId'),
+            'position': content.get('position')
+        }
         
-        # Save the content
-        file_path = self.content_dir / f"{filename}.json"
-        try:
-            with file_path.open('w') as f:
-                json.dump(content, f, indent=2)
-        except Exception as e:
-            logger.error(f"Failed to save content file {file_path}: {e}")
+        logger.debug(f"Final body content: {body_content}")  
+        
+        # Save mapping content first
+        mapping_filepath = os.path.join(self.content_dir, f"{title}_mapping.json")
+        logger.debug(f"Saving mapping to file: {mapping_filepath}")  
+        with open(mapping_filepath, 'w', encoding='utf-8') as f:
+            json.dump(save_content, f, indent=2, ensure_ascii=False)
+        
+        # Save the main content
+        logger.debug(f"Saving main content to file: {filepath}")  
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(save_content, f, indent=2, ensure_ascii=False)
 
     def get_page_id_from_filename(self, filename: str) -> Optional[str]:
         """Get the page ID associated with a filename"""
@@ -900,6 +1026,7 @@ class ContentSyncer:
         """Pull content from Confluence to local"""
         logger.info("Pulling content from Confluence...")
         try:
+            logger.debug("Fetching space content...")
             space_content = self.confluence.get_space_content()
         except ConfluenceAPIError as e:
             logger.error(f"Failed to pull content: {e.message}")
@@ -907,6 +1034,7 @@ class ContentSyncer:
 
         deleted_pages = self._load_deleted_pages()
         
+        logger.debug(f"Processing {len(space_content.get('results', []))} pages...")
         for page in space_content.get('results', []):
             page_id = page['id']
             
@@ -916,11 +1044,13 @@ class ContentSyncer:
                 continue
                 
             try:
+                logger.debug(f"Processing page: {page.get('title', 'Untitled')} (ID: {page_id})")
                 full_page = self.confluence.get_page_by_id(page_id)
                 self.local.save_content(page_id, full_page)
                 
                 # Download attachments with proper error handling
                 try:
+                    logger.debug(f"Getting attachments for page {page_id}...")
                     attachments = self.confluence.get_attachments(page_id)
                     if attachments:
                         logger.info(f"Downloading {len(attachments)} attachments for page {page_id}")
@@ -1110,4 +1240,14 @@ def watch():
     observer.join()
 
 if __name__ == '__main__':
+    # Configure logging before anything else
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        force=True  # Force reconfiguration
+    )
+    
+    # Ensure requests logging is also at debug level
+    logging.getLogger('urllib3').setLevel(logging.DEBUG)
+    
     cli()
