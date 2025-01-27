@@ -1,0 +1,34 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+venv/
+*.egg-info/
+
+# Node modules
+node_modules/
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.example
+
+# IDE configurations
+.vscode/
+.prettierignore
+.prettierrc
+
+# Test cache
+.pytest_cache/
+
+# Build artifacts
+dist/
+build/
+*.egg
+
+# Miscellaneous
+.cache/
+*.swp
